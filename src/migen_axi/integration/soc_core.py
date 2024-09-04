@@ -22,12 +22,16 @@ class SoCCore(Module):
         csr=0x80000000,  # m_axi_gp1
     )
 
-    def __init__(self, platform,
-                 csr_data_width=8,
-                 csr_address_width=14,
-                 max_addr=0xc0000000,
-                 ident="SoCCore",
-                 ps_cd_sys=True):
+    def __init__(
+        self,
+        platform,
+        csr_data_width=8,
+        csr_address_width=14,
+        max_addr=0xC0000000,
+        ident="SoCCore",
+        ps_cd_sys=True,
+        **kwargs,
+    ):
         self.platform = platform
         self.integrated_rom_size = 0
         self.cpu_type = "zynq7000"
@@ -37,7 +41,9 @@ class SoCCore(Module):
         self.csr_address_width = csr_address_width
 
         self._memory_regions = []  # seq of (name, origin, length)
-        self._csr_regions = []  # seq of (name, origin, busword, csr_list|Memory)  # noqa
+        self._csr_regions = (
+            []
+        )  # seq of (name, origin, busword, csr_list|Memory)  # noqa
         self._constants = []  # seq of (name, value)
 
         self._axi_slaves = SlaveManager(max_addr)
@@ -46,22 +52,32 @@ class SoCCore(Module):
         self.csr_devices = [
             "identifier",
         ]
-        self._memory_groups = []  # list of (group_name, (group_member0, group_member1, ...))
-        self._csr_groups = []  # list of (group_name, (group_member0, group_member1, ...))
+        self._memory_groups = (
+            []
+        )  # list of (group_name, (group_member0, group_member1, ...))
+        self._csr_groups = (
+            []
+        )  # list of (group_name, (group_member0, group_member1, ...))
         self.interrupt_devices = []
 
-        self.submodules.ps7 = ps7.PS7(SimpleNamespace(
-            ps=platform.request("ps"),
-            ddr=platform.request("ddr"),
-        ), ps_cd_sys=ps_cd_sys)
+        self.submodules.ps7 = ps7.PS7(
+            SimpleNamespace(
+                ps=platform.request("ps"),
+                ddr=platform.request("ddr"),
+                enet0=kwargs.get("enet0", None),
+                enet1=kwargs.get("enet1", None),
+            ),
+            ps_cd_sys=ps_cd_sys,
+        )
 
         self.submodules.axi2csr = axi2csr.AXI2CSR(
             bus_csr=csr_bus.Interface(csr_data_width, csr_address_width),
-            bus_axi=axi.Interface.like(self.ps7.m_axi_gp1))
+            bus_axi=axi.Interface.like(self.ps7.m_axi_gp1),
+        )
 
-        self.register_mem("csr", self.mem_map["csr"],
-                          4 * 2**(csr_address_width),
-                          self.axi2csr.bus)
+        self.register_mem(
+            "csr", self.mem_map["csr"], 4 * 2 ** (csr_address_width), self.axi2csr.bus
+        )
 
         self.submodules.identifier = identifier.Identifier(ident)
 
@@ -89,7 +105,8 @@ class SoCCore(Module):
         for n, o, l, obj in self._csr_regions:
             if n == name or o == origin:
                 raise ValueError(
-                    "CSR region conflict between {} and {}".format(n, name))
+                    "CSR region conflict between {} and {}".format(n, name)
+                )
 
     def add_csr_region(self, name, origin, busword, obj):
         self.check_csr_region(name, origin)
@@ -128,26 +145,31 @@ class SoCCore(Module):
     def do_finalize(self):
         # CSR
         self.submodules.csrbankarray = csr_bus.CSRBankArray(
-            self, self.get_csr_dev_address,
+            self,
+            self.get_csr_dev_address,
             data_width=self.csr_data_width,
-            address_width=self.csr_address_width)
+            address_width=self.csr_address_width,
+        )
 
         self.submodules.csrcon = csr_bus.Interconnect(
-            self.axi2csr.csr, self.csrbankarray.get_buses())
+            self.axi2csr.csr, self.csrbankarray.get_buses()
+        )
 
         for name, csrs, mapaddr, rmap in self.csrbankarray.banks:
             self.add_csr_region(
-                name, (self.mem_map["csr"] + 0x800 * mapaddr),
-                self.csr_data_width, csrs)
+                name, (self.mem_map["csr"] + 0x800 * mapaddr), self.csr_data_width, csrs
+            )
         for name, memory, mapaddr, mmap in self.csrbankarray.srams:
             self.add_csr_region(
                 "{}_{}".format(name, memory.name_override),
                 (self.mem_map["csr"] + 0x800 * mapaddr),
-                self.csr_data_width, memory)
+                self.csr_data_width,
+                memory,
+            )
         for name, constant in self.csrbankarray.constants:
             self._constants.append(
-                (("_".join([name, constant.name]).upper(),
-                  constant.value.value)))
+                (("_".join([name, constant.name]).upper(), constant.value.value))
+            )
         for name, value in sorted(self.config.items(), key=itemgetter(0)):
             self._constants.append(("CONFIG_" + name.upper(), value))
 
@@ -160,10 +182,12 @@ class SoCCore(Module):
         if len(slaves) > 2:
             raise NotImplementedError("only P2P is supported")
         self.submodules += axi.InterconnectPointToPoint(
-            self.ps7.m_axi_gp1, slaves[0][1])
+            self.ps7.m_axi_gp1, slaves[0][1]
+        )
         if len(slaves) == 2:
             self.submodules += axi.InterconnectPointToPoint(
-                self.ps7.m_axi_gp0, slaves[1][1])
+                self.ps7.m_axi_gp0, slaves[1][1]
+            )
 
     def build(self, *args, **kwargs):
         self.platform.build(self, *args, **kwargs)
